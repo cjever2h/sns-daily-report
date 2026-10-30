@@ -1,4 +1,4 @@
-const APP_URL = 'https://sns-daily-report.vercel.app';
+const APP_URL = 'https://sns-daily-report-ten.vercel.app';
 const $ = id => document.getElementById(id);
 
 async function load() {

@@ -5,7 +5,7 @@ importScripts('scrapers.js');
 
 const SUPABASE_URL = 'https://gcnfvcbatpohhctitnkl.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_8zyr4Cia8y1JiVOguUC12Q_ZOknEH3F';
-const APP_URL = 'https://sns-daily-report.vercel.app';
+const APP_URL = 'https://sns-daily-report-ten.vercel.app';
 const TH = 'https://www.threads.com';
 const KST = 9 * 3600e3;
 const DEFAULTS = { key: '', autoTime: '07:00', autoOn: true, recheckDays: 3, maxPosts: 60 };
