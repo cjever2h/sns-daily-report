@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "더원 스레드 데일리 수집기",
+  "version": "1.0.0",
+  "description": "로그인된 브라우저에서 내 Threads 인사이트와 추적 계정 팔로워를 매일 기록해 SNS 데일리 리포트 웹앱으로 보냅니다.",
+  "permissions": ["alarms", "storage", "scripting", "tabs", "notifications"],
+  "host_permissions": [
+    "https://www.threads.com/*",
+    "https://gcnfvcbatpohhctitnkl.supabase.co/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "스레드 데일리 수집기", "default_icon": { "48": "icon48.png", "128": "icon128.png" } },
+  "icons": { "48": "icon48.png", "128": "icon128.png" }
+}
