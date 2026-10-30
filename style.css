@@ -65,7 +65,7 @@ main { max-width: 1040px; margin: 0 auto; padding: 16px 16px 60px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 7px 6px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-th:first-child, td:first-child { text-align: left; }
+th:first-child, td:first-child, th.t { text-align: left; }
 td.t { text-align: left; white-space: normal; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 th { color: var(--sub); font-weight: 600; font-size: 12px; }
 .scroll-x { overflow-x: auto; }
@@ -102,6 +102,8 @@ code { background: #f2f2f0; padding: 1px 6px; border-radius: 6px; font-size: 13p
 
 @media (max-width: 600px) {
   main { padding: 12px 12px 60px; }
+  .brand h1 { font-size: 15px; }
+  .brand .meta { font-size: 11px; }
   .kpi .v { font-size: 21px; }
   .track-row { grid-template-columns: 1fr; }
   .track-row .nums { justify-content: flex-start; }

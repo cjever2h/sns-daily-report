@@ -181,7 +181,7 @@ function vReport() {
     <div class="action"><div class="l">오늘의 행동 1개 (데이터 규칙 기반 제안)</div><div class="v">${esc(act.title)}</div><div class="s">${esc(act.why)}</div></div>
     ${best ? `<div class="card"><h2>그날 베스트 글 <span class="badge">팔로우 ${fmt(best.follows)}</span></h2>${postCard(best, conv30)}</div>` : ''}
     <div class="card"><h2>그날 올린 글</h2>${ps.length ? `<div class="scroll-x"><table>
-      <tr><th>시각</th><th>첫 줄</th><th>조회</th><th>프로필</th><th>팔로우</th><th>1만당</th><th>좋아요</th><th>답글</th><th></th></tr>${rows}</table></div>
+      <tr><th>시각</th><th class="t">첫 줄</th><th>조회</th><th>프로필</th><th>팔로우</th><th>1만당</th><th>좋아요</th><th>답글</th><th></th></tr>${rows}</table></div>
       <p class="hint">좋아요·답글 수는 인사이트 비율로 계산한 값이라 1~2 차이가 날 수 있어요.</p>`
       : `<div class="empty">이 날짜에 수집된 글이 없어요. (인사이트는 하루 정도 늦게 반영돼요)</div>`}</div>`;
 }
