@@ -8,7 +8,7 @@ const $app = document.getElementById('app');
 const KST = 9 * 3600e3;
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 
-const S = { user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], tab: 'report', reportDay: null,
+const S = { user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], drafts: [], reports: [], draftDay: null, edits: {}, showFull: false, tab: 'report', reportDay: null,
   postQ: '', postSort: 'recent', postRange: '30', anaRange: '30', folPeriod: 'day', loaded: false };
 
 /* ---------- utils ---------- */
@@ -74,13 +74,16 @@ async function loadAll() {
   let { data: st } = await sb.from('sns_settings').select('*').eq('user_id', uid).maybeSingle();
   if (!st) { const r = await sb.from('sns_settings').insert({ user_id: uid }).select().single(); st = r.data; }
   S.settings = st;
-  const [d, p, t, td] = await Promise.all([
+  const [d, p, t, td, dr, rp] = await Promise.all([
     sb.from('sns_account_daily').select('*').order('day', { ascending: true }).limit(2000),
     sb.from('sns_posts').select('*').order('posted_at', { ascending: false }).limit(5000),
     sb.from('sns_tracked').select('*').order('created_at', { ascending: true }),
     sb.from('sns_tracked_daily').select('handle,day,followers,full_name,recent_posts').gte('day', shiftDay(todayK(), -180)).order('day', { ascending: true }).limit(10000),
+    sb.from('sns_drafts').select('*').gte('report_day', shiftDay(todayK(), -14)).order('slot_at', { ascending: true }).limit(500),
+    sb.from('sns_daily_reports').select('*').gte('day', shiftDay(todayK(), -30)).order('day', { ascending: false }).limit(60),
   ]);
   S.daily = d.data || []; S.posts = (p.data || []).filter(x => x.posted_at); S.tracked = t.data || []; S.tdaily = td.data || [];
+  S.drafts = dr.data || []; S.reports = rp.data || [];
   S.loaded = true;
 }
 const fol = r => r.followers ?? r.insights_followers;
@@ -91,7 +94,7 @@ const postsOn = day => S.posts.filter(p => postDay(p) === day).sort((a, b) => a.
 const postsSince = days => { if (days === 'all') return S.posts; const cut = Date.now() - Number(days) * 864e5; return S.posts.filter(p => Date.parse(p.posted_at) >= cut); };
 
 /* ---------- shell ---------- */
-const TABS = [['report', '리포트'], ['followers', '팔로워'], ['posts', '내 글'], ['analysis', '분석'], ['track', '추적'], ['settings', '설정']];
+const TABS = [['report', '리포트'], ['drafts', '초안'], ['followers', '팔로워'], ['posts', '내 글'], ['analysis', '분석'], ['track', '추적'], ['settings', '설정']];
 function shell(inner) {
   const last = S.settings?.last_ingest_at ? new Date(Date.parse(S.settings.last_ingest_at) + KST).toISOString().slice(5, 16).replace('T', ' ') : '없음';
   return `<header class="top"><div class="top-in">
@@ -103,8 +106,8 @@ function shell(inner) {
 function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = `<div class="boot">데이터 불러오는 중…</div>`; return; }
-  const views = { report: vReport, followers: vFollowers, posts: vPosts, analysis: vAnalysis, track: vTrack, settings: vSettings };
-  const needData = !S.daily.length && !S.posts.length && !['settings', 'track'].includes(S.tab);
+  const views = { report: vReport, drafts: vDrafts, followers: vFollowers, posts: vPosts, analysis: vAnalysis, track: vTrack, settings: vSettings };
+  const needData = !S.daily.length && !S.posts.length && !['settings', 'track', 'drafts'].includes(S.tab);
   $app.innerHTML = shell(needData ? vOnboard() : views[S.tab]());
 }
 function go(tab) { S.tab = tab; history.replaceState(null, '', '#' + tab); render(); window.scrollTo(0, 0); }
@@ -164,7 +167,7 @@ function vReport() {
     <td class="${c != null && conv30 != null && c >= conv30 ? 'up' : ''}">${fmt1(c)}</td><td>${fmt(p.likes)}</td><td>${fmt(p.replies)}</td>
     <td><a class="btn sm" href="${threadUrl(p)}" target="_blank" rel="noopener">보기</a></td></tr>`; }).join('');
 
-  return `<div class="toolbar">
+  return `${aiReportCard()}<div class="toolbar">
       <button class="btn" data-day="-1">◀ 전날</button>
       <input type="date" id="repDay" value="${day}" max="${todayK()}">
       <button class="btn" data-day="1" ${day >= todayK() ? 'disabled' : ''}>다음날 ▶</button>
@@ -218,6 +221,65 @@ function postCard(p, conv30) {
       <span class="chip ${c != null && conv30 != null && c >= conv30 && p.views >= 300 ? 'hot' : ''}">1만당 <b>${fmt1(c)}</b></span>
       <span class="chip">프로필 <b>${fmt(p.profile_visits)}</b></span><span class="chip">♥ <b>${fmt(p.likes)}</b></span><span class="chip">답글 <b>${fmt(p.replies)}</b></span>
       <span class="chip">리포스트 <b>${fmt(p.reposts)}</b></span></div></div>`;
+}
+
+/* ---------- AI 리포트 요약 + 초안 (Aside 루틴이 매일 아침 올림) ---------- */
+const ST = { draft: '초안', approved: '승인됨 · 예약 대기', scheduled: '예약됨', failed: '예약 실패', skipped: '건너뜀' };
+const needsCheck = s => /\[확인/.test(s || '');
+const slotK = d => new Date(Date.parse(d.slot_at) + KST).toISOString();
+const slotLabel = d => { const k = slotK(d); const day = k.slice(0, 10); return `${day === todayK() ? '오늘' : day === shiftDay(todayK(), 1) ? '내일' : dayLabel(day)} ${k.slice(11, 16)}`; };
+const bodyOf = d => S.edits[d.id] ?? d.body;
+const tooLate = d => Date.parse(d.slot_at) < Date.now() + 70 * 60e3;
+function aiReportCard() {
+  const r = S.reports[0]; if (!r) return '';
+  const ds = S.drafts.filter(d => d.report_day === r.day);
+  const waiting = ds.filter(d => d.status === 'draft' && !tooLate(d)).length;
+  const chips = (r.summary || []).map(s => `<span class="chip">${esc(s.label)} <b>${esc(s.value)}</b>${s.note ? ` <span class="${/^\+/.test(s.note) ? 'up' : /^-/.test(s.note) ? 'down' : 'muted'}">${esc(s.note)}</span>` : ''}</span>`).join('');
+  return `<div class="action"><div class="l">${dayLabel(r.day)} AI 리포트 · 오늘의 핵심 행동</div>
+    <div class="v">${esc(r.key_action || '')}</div><div class="s">${esc(r.key_reason || '')}</div>
+    ${chips ? `<div class="chips" style="margin-top:10px">${chips}</div>` : ''}
+    <div class="toolbar" style="margin:12px 0 0">${ds.length ? `<button class="btn sm primary" data-tab="drafts">초안 ${ds.length}개 보기${waiting ? ` · 승인 대기 ${waiting}` : ''}</button>` : ''}
+    ${r.report_md ? `<button class="btn sm" id="toggleFull">${S.showFull ? '리포트 전문 접기' : '리포트 전문 보기'}</button>` : ''}</div>
+    ${S.showFull && r.report_md ? `<div class="fullrep">${esc(r.report_md)}</div>` : ''}</div>`;
+}
+function vDrafts() {
+  const days = [...new Set(S.drafts.map(d => d.report_day))].sort().reverse();
+  if (!days.length) return `<div class="card empty">아직 초안이 없어요.<br>매일 아침 리포트가 끝나면 그날 시간대별 스레드 초안이 여기에 올라와요.</div>`;
+  const day = S.draftDay && days.includes(S.draftDay) ? S.draftDay : days[0];
+  const ds = S.drafts.filter(d => d.report_day === day).sort((a, b) => a.slot_at.localeCompare(b.slot_at));
+  const ready = ds.filter(d => d.status === 'draft' && !needsCheck(bodyOf(d)) && !tooLate(d));
+  const cards = ds.map(d => {
+    const b = bodyOf(d), lock = ['scheduled', 'skipped'].includes(d.status), late = tooLate(d) && ['draft', 'approved'].includes(d.status);
+    const dirty = S.edits[d.id] != null && S.edits[d.id] !== d.body;
+    return `<div class="card draft st-${d.status}" data-id="${d.id}">
+      <div class="dhead"><b>${slotLabel(d)}</b>${d.role ? `<span class="chip">${esc(d.role)}</span>` : ''}${d.experiment ? `<span class="chip hot">${esc(d.experiment)}</span>` : ''}<span class="pill">${ST[d.status] || d.status}</span></div>
+      ${d.scheduled_label ? `<p class="hint">스레드: ${esc(d.scheduled_label)}</p>` : ''}${d.status_note ? `<p class="hint">${esc(d.status_note)}</p>` : ''}
+      <textarea class="dbody" data-id="${d.id}" rows="${Math.min(14, b.split('\n').length + 1)}" ${lock ? 'readonly' : ''}>${esc(b)}</textarea>
+      <div class="hint">${b.length}자${needsCheck(b) ? ' · <span class="down">[확인] 부분을 채워야 승인할 수 있어요</span>' : ''}${late ? ' · <span class="down">게시 시각이 1시간 안쪽이라 자동 예약이 어려워요. 복사해서 직접 올려 주세요</span>' : ''}</div>
+      ${d.self_reply ? `<div class="reply"><div class="l">올린 직후 본인 답글</div><div class="txt">${esc(d.self_reply)}</div><button class="btn sm" data-dact="copyReply" data-id="${d.id}">답글 복사</button></div>` : ''}
+      ${d.rationale ? `<p class="hint">근거: ${esc(d.rationale)}</p>` : ''}
+      ${d.sources ? `<details class="hint"><summary>사실 출처</summary><div style="white-space:pre-wrap">${esc(d.sources)}</div></details>` : ''}
+      <div class="toolbar" style="margin:10px 0 0">
+        <button class="btn sm" data-dact="copy" data-id="${d.id}">본문 복사</button>
+        ${lock ? '' : `<button class="btn sm ${dirty ? 'dark' : ''}" data-dact="save" data-id="${d.id}" ${dirty ? '' : 'disabled'}>수정 저장</button>`}
+        ${d.status === 'draft' || d.status === 'failed' ? `<button class="btn sm primary" data-dact="approve" data-id="${d.id}" ${needsCheck(b) || tooLate(d) ? 'disabled' : ''}>예약 승인</button>` : ''}
+        ${d.status === 'approved' ? `<button class="btn sm" data-dact="unapprove" data-id="${d.id}">승인 취소</button>` : ''}
+        ${d.status === 'draft' || d.status === 'failed' ? `<button class="btn sm" data-dact="skip" data-id="${d.id}">건너뛰기</button>` : ''}
+        ${d.status === 'skipped' ? `<button class="btn sm" data-dact="restore" data-id="${d.id}">되살리기</button>` : ''}
+        ${d.status === 'scheduled' ? `<span class="hint">수정·삭제는 스레드 앱 임시 저장본에서</span>` : ''}
+      </div></div>`;
+  }).join('');
+  return `<div class="toolbar">
+      <select id="draftDay">${days.map(x => `<option value="${x}" ${x === day ? 'selected' : ''}>${dayLabel(x)} 리포트 초안</option>`).join('')}</select>
+      <button class="btn primary" data-dact="approveAll" ${ready.length ? '' : 'disabled'}>확인 필요 없는 초안 모두 승인 (${ready.length})</button>
+      <button class="btn" id="reload">새로고침</button></div>
+    <div class="card" style="background:#fffaf5"><p class="hint" style="margin:0">승인한 초안은 Aside가 1시간마다(07~22시) 확인해서 스레드 예약 기능으로 걸어요. 예약되면 '예약됨'으로 바뀌고, 그때부터는 컴퓨터가 꺼져 있어도 올라가요. 게시 1시간 전까지는 승인해 주세요. 본인 답글은 예약이 안 돼서 올라간 뒤 직접 달아야 해요.</p></div>
+    ${cards}`;
+}
+async function updDraft(id, patch) {
+  const { data, error } = await sb.from('sns_drafts').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (error) { toast('실패: ' + error.message); return null; }
+  S.drafts = S.drafts.map(x => x.id === id ? data : x); delete S.edits[id]; return data;
 }
 
 /* ---------- followers ---------- */
@@ -371,6 +433,25 @@ $app.addEventListener('click', async e => {
   if (t.dataset.tab) return go(t.dataset.tab);
   if (t.dataset.day) { const d = S.reportDay || shiftDay(todayK(), -1); S.reportDay = shiftDay(d, Number(t.dataset.day)); if (S.reportDay > todayK()) S.reportDay = todayK(); return render(); }
   if (t.dataset.fp) { S.folPeriod = t.dataset.fp; return render(); }
+  if (t.dataset.dact) {
+    const id = t.dataset.id, d = S.drafts.find(x => x.id === id);
+    switch (t.dataset.dact) {
+      case 'copy': await navigator.clipboard.writeText(bodyOf(d)); return toast('본문을 복사했어요');
+      case 'copyReply': await navigator.clipboard.writeText(d.self_reply || ''); return toast('답글을 복사했어요');
+      case 'save': if (await updDraft(id, { body: bodyOf(d) })) toast('저장했어요'); return render();
+      case 'approve': { const b = bodyOf(d); if (needsCheck(b)) return toast('[확인] 부분을 먼저 채워 주세요');
+        if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast('승인했어요. 1시간 안에 스레드에 예약돼요'); return render(); }
+      case 'unapprove': if (await updDraft(id, { status: 'draft', approved_at: null })) toast('승인을 취소했어요'); return render();
+      case 'skip': if (await updDraft(id, { status: 'skipped' })) toast('건너뛰었어요'); return render();
+      case 'restore': if (await updDraft(id, { status: 'draft', status_note: null })) toast('되살렸어요'); return render();
+      case 'approveAll': {
+        const day = S.draftDay || [...new Set(S.drafts.map(x => x.report_day))].sort().reverse()[0];
+        const list = S.drafts.filter(x => x.report_day === day && x.status === 'draft' && !needsCheck(bodyOf(x)) && !tooLate(x));
+        for (const x of list) await updDraft(x.id, { body: bodyOf(x), status: 'approved', approved_at: new Date().toISOString(), status_note: null });
+        toast(`${list.length}개 승인했어요`); return render();
+      }
+    }
+  }
   if (t.dataset.ar) { S.anaRange = t.dataset.ar; return render(); }
   if (t.hasAttribute('data-toggle')) { const p = t.closest('.post'); p.classList.toggle('open'); t.textContent = p.classList.contains('open') ? '접기' : '전체 보기'; return; }
   if (t.dataset.del) {
@@ -381,6 +462,7 @@ $app.addEventListener('click', async e => {
     toast('삭제했어요'); return render();
   }
   switch (t.id) {
+    case 'toggleFull': S.showFull = !S.showFull; return render();
     case 'copyRep': await navigator.clipboard.writeText(reportText(S.reportDay || shiftDay(todayK(), -1))); return toast('리포트를 복사했어요');
     case 'copyKey': await navigator.clipboard.writeText(S.settings.ingest_key); return toast('수집 키를 복사했어요');
     case 'regenKey': {
@@ -400,12 +482,20 @@ $app.addEventListener('click', async e => {
   }
 });
 $app.addEventListener('input', e => {
+  if (e.target.classList.contains('dbody')) {
+    const id = e.target.dataset.id; S.edits[id] = e.target.value;
+    const d = S.drafts.find(x => x.id === id); const card = e.target.closest('.draft');
+    const sv = card.querySelector('[data-dact="save"]'); if (sv) { const dirty = e.target.value !== d.body; sv.disabled = !dirty; sv.classList.toggle('dark', dirty); }
+    const ap = card.querySelector('[data-dact="approve"]'); if (ap) ap.disabled = needsCheck(e.target.value) || tooLate(d);
+    return;
+  }
   if (e.target.id === 'postQ') { S.postQ = e.target.value; clearTimeout(S._q); S._q = setTimeout(() => { const pos = e.target.selectionStart; render(); const el = document.getElementById('postQ'); el.focus(); el.setSelectionRange(pos, pos); }, 250); }
 });
 $app.addEventListener('change', e => {
   if (e.target.id === 'postSort') { S.postSort = e.target.value; render(); }
   if (e.target.id === 'postRange') { S.postRange = e.target.value; render(); }
   if (e.target.id === 'repDay' && e.target.value) { S.reportDay = e.target.value; render(); }
+  if (e.target.id === 'draftDay') { S.draftDay = e.target.value; render(); }
 });
 $app.addEventListener('submit', async e => {
   if (e.target.id !== 'addTrack') return;
