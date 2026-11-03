@@ -481,7 +481,7 @@ $app.addEventListener('click', async e => {
       case 'done': if (await updDraft(id, { status: 'scheduled', status_note: '직접 올림', scheduled_label: '휴대폰으로 올림' })) toast('올린 것으로 표시했어요'); return render();
       case 'save': if (await updDraft(id, { body: bodyOf(d) })) toast('저장했어요'); return render();
       case 'approve': { const b = bodyOf(d); if (needsCheck(b)) return toast('[확인] 부분을 먼저 채워 주세요'); if (!canApprove({ ...d, body: b })) return toast('이 초안은 예약할 수 없어요');
-        if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast('승인했어요. 1시간 안에 스레드에 예약돼요'); return render(); }
+        if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast(`승인했어요. 1시간 안에 ${d.platform === 'instagram' ? '인스타' : '스레드'}에 예약돼요`); return render(); }
       case 'unapprove': if (await updDraft(id, { status: 'draft', approved_at: null })) toast('승인을 취소했어요'); return render();
       case 'skip': if (await updDraft(id, { status: 'skipped' })) toast('건너뛰었어요'); return render();
       case 'restore': if (await updDraft(id, { status: 'draft', status_note: null })) toast('되살렸어요'); return render();
