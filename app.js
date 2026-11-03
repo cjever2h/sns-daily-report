@@ -8,7 +8,7 @@ const $app = document.getElementById('app');
 const KST = 9 * 3600e3;
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 
-const S = { user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], drafts: [], reports: [], draftDay: null, edits: {}, showFull: false, tab: 'report', reportDay: null,
+const S = { platform: localStorage.getItem('sns_pf') === 'instagram' ? 'instagram' : 'threads', allDaily: [], allPosts: [], signed: {}, user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], drafts: [], reports: [], draftDay: null, edits: {}, showFull: false, tab: 'report', reportDay: null,
   postQ: '', postSort: 'recent', postRange: '30', anaRange: '30', folPeriod: 'day', loaded: false };
 
 /* ---------- utils ---------- */
@@ -29,7 +29,16 @@ const sum = (a, k) => a.reduce((s, x) => s + (x[k] || 0), 0);
 const avg = (a, k) => { const v = a.map(x => x[k]).filter(x => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
 const median = (a, k) => { const v = a.map(x => x[k]).filter(x => x != null).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
 const firstLine = t => (t || '').split('\n').find(x => x.trim()) || '(본문 없음)';
-const threadUrl = p => `https://www.threads.com/@${p.handle || S.settings?.threads_handle || ''}/post/${p.code}`;
+const IG = () => S.platform === 'instagram';
+const PF = () => IG() ? 'Instagram' : 'Threads';
+const KIND = { reel: '릴스', carousel: '캐러셀', image: '사진', text: '글' };
+const threadUrl = p => (p.platform || 'threads') === 'instagram'
+  ? `https://www.instagram.com/${p.media_kind === 'reel' ? 'reel' : 'p'}/${p.code}/`
+  : `https://www.threads.com/@${p.handle || S.settings?.threads_handle || ''}/post/${p.code}`;
+function applyPlatform() {
+  const pf = r => (r.platform || 'threads') === S.platform;
+  S.daily = S.allDaily.filter(pf); S.posts = S.allPosts.filter(pf);
+}
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 2200); }
 
 /* ---------- charts (SVG) ---------- */
@@ -82,7 +91,8 @@ async function loadAll() {
     sb.from('sns_drafts').select('*').gte('report_day', shiftDay(todayK(), -14)).order('slot_at', { ascending: true }).limit(500),
     sb.from('sns_daily_reports').select('*').gte('day', shiftDay(todayK(), -30)).order('day', { ascending: false }).limit(60),
   ]);
-  S.daily = d.data || []; S.posts = (p.data || []).filter(x => x.posted_at); S.tracked = t.data || []; S.tdaily = td.data || [];
+  S.allDaily = d.data || []; S.allPosts = (p.data || []).filter(x => x.posted_at); S.tracked = t.data || []; S.tdaily = td.data || [];
+  applyPlatform();
   S.drafts = dr.data || []; S.reports = rp.data || [];
   S.loaded = true;
 }
@@ -98,17 +108,20 @@ const TABS = [['report', '리포트'], ['drafts', '초안'], ['followers', '팔�
 function shell(inner) {
   const last = S.settings?.last_ingest_at ? new Date(Date.parse(S.settings.last_ingest_at) + KST).toISOString().slice(5, 16).replace('T', ' ') : '없음';
   return `<header class="top"><div class="top-in">
-    <div class="brand"><h1>SNS 데일리 리포트 <span>· Threads</span></h1>
-    <div class="meta">${S.settings?.threads_handle ? '@' + esc(S.settings.threads_handle) + '<br>' : ''}마지막 수집 ${last}</div></div>
+    <div class="brand"><h1>SNS 데일리 리포트 <span>· ${PF()}</span></h1>
+    <span class="seg pfseg"><button data-pf="threads" class="${IG() ? '' : 'on'}">스레드</button><button data-pf="instagram" class="${IG() ? 'on' : ''}">인스타</button></span>
+    <div class="meta">${IG() ? '@' + esc(S.settings?.ig_handle || 'habbit_theone') + '<br>' + igLast() : (S.settings?.threads_handle ? '@' + esc(S.settings.threads_handle) + '<br>' : '') + '마지막 수집 ' + last}</div></div>
     <nav class="tabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
   </div></header><main>${inner}</main>`;
 }
+function igLast() { const r = S.daily[S.daily.length - 1]; return r ? '마지막 수집 ' + new Date(Date.parse(r.collected_at) + KST).toISOString().slice(5, 16).replace('T', ' ') : '아직 수집 없음'; }
 function render() {
   if (!S.user) return renderLogin();
   if (!S.loaded) { $app.innerHTML = `<div class="boot">데이터 불러오는 중…</div>`; return; }
   const views = { report: vReport, drafts: vDrafts, followers: vFollowers, posts: vPosts, analysis: vAnalysis, track: vTrack, settings: vSettings };
   const needData = !S.daily.length && !S.posts.length && !['settings', 'track', 'drafts'].includes(S.tab);
-  $app.innerHTML = shell(needData ? vOnboard() : views[S.tab]());
+  $app.innerHTML = shell(needData ? (IG() ? `<div class="card empty">인스타 데이터는 매일 아침 Aside 리포트가 올려요. 내일 아침부터 표시돼요.</div>` : vOnboard()) : views[S.tab]());
+  if (S.tab === 'drafts') loadThumbs();
 }
 function go(tab) { S.tab = tab; history.replaceState(null, '', '#' + tab); render(); window.scrollTo(0, 0); }
 
@@ -164,7 +177,7 @@ function vReport() {
 
   const rows = ps.map(p => { const c = conv(p.follows, p.views); return `<tr>
     <td>${hm(p)}</td><td class="t">${esc(firstLine(p.text)).slice(0, 60)}</td><td>${fmt(p.views)}</td><td>${fmt(p.profile_visits)}</td><td>${fmt(p.follows)}</td>
-    <td class="${c != null && conv30 != null && c >= conv30 ? 'up' : ''}">${fmt1(c)}</td><td>${fmt(p.likes)}</td><td>${fmt(p.replies)}</td>
+    <td class="${c != null && conv30 != null && c >= conv30 ? 'up' : ''}">${fmt1(c)}</td><td>${fmt(p.likes)}</td><td>${fmt(p.replies)}</td>${IG() ? `<td>${fmt(p.saves)}</td><td>${fmt(p.shares)}</td><td>${fmt1(p.nonfollower_view_pct)}%</td>` : ''}
     <td><a class="btn sm" href="${threadUrl(p)}" target="_blank" rel="noopener">보기</a></td></tr>`; }).join('');
 
   return `${aiReportCard()}<div class="toolbar">
@@ -173,19 +186,19 @@ function vReport() {
       <button class="btn" data-day="1" ${day >= todayK() ? 'disabled' : ''}>다음날 ▶</button>
       <button class="btn dark" id="copyRep">리포트 텍스트 복사</button>
     </div>
-    <div class="card" style="background:#fffaf5"><h2>${dayLabel(day)} 스레드 리포트 <span class="hint">게시 ${ps.length}개 · 수치는 마지막 수집 기준</span></h2>
+    <div class="card" style="background:#fffaf5"><h2>${dayLabel(day)} ${IG() ? '인스타' : '스레드'} 리포트 <span class="hint">게시 ${ps.length}개 · 수치는 마지막 수집 기준</span></h2>
     <div class="kpis">
       <div class="kpi"><div class="l">팔로워 (현재)</div><div class="v">${fmt(fNow && fol(fNow))}</div><div class="d"><span class="${cls(dayDelta)}">그날 ${sign(dayDelta)}</span> · <span class="${cls(wkDelta)}">7일 ${sign(wkDelta)}</span></div></div>
       <div class="kpi"><div class="l">그날 글 조회수 합</div><div class="v">${fmt(views)}</div><div class="d muted">30일 글 중앙값 ${fmt(med30)}/글</div></div>
       <div class="kpi"><div class="l">글로 생긴 팔로우</div><div class="v">${fmt(follows)}</div><div class="d muted">프로필 방문 ${fmt(pv)}</div></div>
       <div class="kpi"><div class="l">1만 조회당 팔로우</div><div class="v ${cDay != null && conv30 != null ? (cDay >= conv30 ? 'up' : 'down') : ''}">${fmt1(cDay)}</div><div class="d muted">30일 평균 ${fmt1(conv30)} · 목표 30</div></div>
-      <div class="kpi"><div class="l">최근 7일 조회 (인사이트)</div><div class="v">${fmt(latest?.views_7d)}</div><div class="d"><span class="${cls(latest?.net_followers_7d)}">순 팔로워 ${sign(latest?.net_followers_7d)}</span></div></div>
+      <div class="kpi"><div class="l">최근 7일 조회 (인사이트)</div><div class="v">${fmt(latest?.views_7d)}</div><div class="d">${IG() ? `<span class="muted">비팔로워 ${fmt1(latest?.nonfollower_view_pct_7d)}% · 프로필 방문 ${fmt(latest?.profile_visits_7d)}</span>` : `<span class="${cls(latest?.net_followers_7d)}">순 팔로워 ${sign(latest?.net_followers_7d)}</span>`}</div></div>
     </div></div>
     <div class="action"><div class="l">오늘의 행동 1개 (데이터 규칙 기반 제안)</div><div class="v">${esc(act.title)}</div><div class="s">${esc(act.why)}</div></div>
     ${best ? `<div class="card"><h2>그날 베스트 글 <span class="badge">팔로우 ${fmt(best.follows)}</span></h2>${postCard(best, conv30)}</div>` : ''}
     <div class="card"><h2>그날 올린 글</h2>${ps.length ? `<div class="scroll-x"><table>
-      <tr><th>시각</th><th class="t">첫 줄</th><th>조회</th><th>프로필</th><th>팔로우</th><th>1만당</th><th>좋아요</th><th>답글</th><th></th></tr>${rows}</table></div>
-      <p class="hint">좋아요·답글 수는 인사이트 비율로 계산한 값이라 1~2 차이가 날 수 있어요.</p>`
+      <tr><th>시각</th><th class="t">첫 줄</th><th>조회</th><th>프로필</th><th>팔로우</th><th>1만당</th><th>좋아요</th><th>${IG() ? '댓글' : '답글'}</th>${IG() ? '<th>저장</th><th>공유</th><th>비팔로워</th>' : ''}<th></th></tr>${rows}</table></div>
+      <p class="hint">${IG() ? '인스타 수치는 매일 아침 Aside가 인사이트에서 읽은 값이에요. 릴스는 올린 뒤 7일 동안 매일 다시 읽어요.' : '좋아요·답글 수는 인사이트 비율로 계산한 값이라 1~2 차이가 날 수 있어요.'}</p>`
       : `<div class="empty">이 날짜에 수집된 글이 없어요. (인사이트는 하루 정도 늦게 반영돼요)</div>`}</div>`;
 }
 function suggestAction(day, ps, p30, conv30) {
@@ -206,21 +219,22 @@ function reportText(day) {
   const ps = postsOn(day); const v = sum(ps, 'views'), f = sum(ps, 'follows');
   const fn = followerOn(todayK()); const p30 = postsSince(30).filter(p => postDay(p) < todayK());
   const act = suggestAction(day, ps, p30, conv(sum(p30, 'follows'), sum(p30, 'views')));
-  const lines = [`[${dayLabel(day)} 스레드 리포트]`, `팔로워 ${fmt(fn && fol(fn))}`, `게시 ${ps.length}개 · 조회 ${fmt(v)} · 팔로우 ${fmt(f)} · 1만당 ${fmt1(conv(f, v))}`];
+  const lines = [`[${dayLabel(day)} ${IG() ? '인스타' : '스레드'} 리포트]`, `팔로워 ${fmt(fn && fol(fn))}`, `게시 ${ps.length}개 · 조회 ${fmt(v)} · 팔로우 ${fmt(f)} · 1만당 ${fmt1(conv(f, v))}`];
   ps.forEach(p => lines.push(`- ${hm(p)} ${firstLine(p.text).slice(0, 30)} | ${fmt(p.views)}뷰 / 팔로우 ${fmt(p.follows)}`));
   lines.push(`오늘의 행동: ${act.title}`);
   return lines.join('\n');
 }
 function postCard(p, conv30) {
   const c = conv(p.follows, p.views);
-  return `<div class="post" data-code="${esc(p.code)}"><div class="when">${postDay(p)} ${hm(p)} (${DOW[postK(p).getUTCDay()]})
-      <a class="btn sm" href="${threadUrl(p)}" target="_blank" rel="noopener">스레드에서 보기</a>
+  const ig = (p.platform || 'threads') === 'instagram';
+  return `<div class="post" data-code="${esc(p.code)}"><div class="when">${postDay(p)} ${hm(p)} (${DOW[postK(p).getUTCDay()]})${ig && p.media_kind ? ` <span class="chip">${KIND[p.media_kind] || esc(p.media_kind)}</span>` : ''}
+      <a class="btn sm" href="${threadUrl(p)}" target="_blank" rel="noopener">${ig ? '인스타에서 보기' : '스레드에서 보기'}</a>
       <button class="btn sm" data-toggle>전체 보기</button></div>
     <div class="txt">${esc(p.text || '')}</div>
     <div class="chips"><span class="chip">조회 <b>${fmt(p.views)}</b></span><span class="chip">팔로우 <b>${fmt(p.follows)}</b></span>
       <span class="chip ${c != null && conv30 != null && c >= conv30 && p.views >= 300 ? 'hot' : ''}">1만당 <b>${fmt1(c)}</b></span>
-      <span class="chip">프로필 <b>${fmt(p.profile_visits)}</b></span><span class="chip">♥ <b>${fmt(p.likes)}</b></span><span class="chip">답글 <b>${fmt(p.replies)}</b></span>
-      <span class="chip">리포스트 <b>${fmt(p.reposts)}</b></span></div></div>`;
+      <span class="chip">프로필 <b>${fmt(p.profile_visits)}</b></span><span class="chip">♥ <b>${fmt(p.likes)}</b></span><span class="chip">${ig ? '댓글' : '답글'} <b>${fmt(p.replies)}</b></span>
+      ${ig ? `<span class="chip">저장 <b>${fmt(p.saves)}</b></span><span class="chip">공유 <b>${fmt(p.shares)}</b></span><span class="chip ${p.nonfollower_view_pct >= 60 ? 'hot' : ''}">비팔로워 <b>${fmt1(p.nonfollower_view_pct)}%</b></span>` : `<span class="chip">리포스트 <b>${fmt(p.reposts)}</b></span>`}</div></div>`;
 }
 
 /* ---------- AI 리포트 요약 + 초안 (Aside 루틴이 매일 아침 올림) ---------- */
@@ -232,7 +246,7 @@ const bodyOf = d => S.edits[d.id] ?? d.body;
 const tooLate = d => Date.parse(d.slot_at) < Date.now() + 70 * 60e3;
 function aiReportCard() {
   const r = S.reports[0]; if (!r) return '';
-  const ds = S.drafts.filter(d => d.report_day === r.day);
+  const ds = S.drafts.filter(d => d.report_day === r.day && (d.platform || 'threads') === S.platform);
   const waiting = ds.filter(d => d.status === 'draft' && !tooLate(d)).length;
   const chips = (r.summary || []).map(s => `<span class="chip">${esc(s.label)} <b>${esc(s.value)}</b>${s.note ? ` <span class="${/^\+/.test(s.note) ? 'up' : /^-/.test(s.note) ? 'down' : 'muted'}">${esc(s.note)}</span>` : ''}</span>`).join('');
   return `<div class="action"><div class="l">${dayLabel(r.day)} AI 리포트 · 오늘의 핵심 행동</div>
@@ -243,38 +257,60 @@ function aiReportCard() {
     ${S.showFull && r.report_md ? `<div class="fullrep">${esc(r.report_md)}</div>` : ''}</div>`;
 }
 function vDrafts() {
-  const days = [...new Set(S.drafts.map(d => d.report_day))].sort().reverse();
-  if (!days.length) return `<div class="card empty">아직 초안이 없어요.<br>매일 아침 리포트가 끝나면 그날 시간대별 스레드 초안이 여기에 올라와요.</div>`;
+  const mine = S.drafts.filter(d => (d.platform || 'threads') === S.platform);
+  const days = [...new Set(mine.map(d => d.report_day))].sort().reverse();
+  if (!days.length) return `<div class="card empty">아직 ${IG() ? '인스타' : '스레드'} 초안이 없어요.<br>${IG() ? '블로그에 새 글이 올라오면 매일 아침 릴스 대본과 캐러셀 초안이 여기에 올라와요.' : '매일 아침 리포트가 끝나면 그날 시간대별 스레드 초안이 여기에 올라와요.'}</div>`;
   const day = S.draftDay && days.includes(S.draftDay) ? S.draftDay : days[0];
-  const ds = S.drafts.filter(d => d.report_day === day).sort((a, b) => a.slot_at.localeCompare(b.slot_at));
-  const ready = ds.filter(d => d.status === 'draft' && !needsCheck(bodyOf(d)) && !tooLate(d));
+  const ds = mine.filter(d => d.report_day === day).sort((a, b) => a.slot_at.localeCompare(b.slot_at));
+  const ready = ds.filter(d => d.status === 'draft' && canApprove(d));
   const cards = ds.map(d => {
     const b = bodyOf(d), lock = ['scheduled', 'skipped'].includes(d.status), late = tooLate(d) && ['draft', 'approved'].includes(d.status);
     const dirty = S.edits[d.id] != null && S.edits[d.id] !== d.body;
+    const ig = d.platform === 'instagram', media = Array.isArray(d.media) ? d.media : [];
     return `<div class="card draft st-${d.status}" data-id="${d.id}">
-      <div class="dhead"><b>${slotLabel(d)}</b>${d.role ? `<span class="chip">${esc(d.role)}</span>` : ''}${d.experiment ? `<span class="chip hot">${esc(d.experiment)}</span>` : ''}<span class="pill">${ST[d.status] || d.status}</span></div>
-      ${d.scheduled_label ? `<p class="hint">스레드: ${esc(d.scheduled_label)}</p>` : ''}${d.status_note ? `<p class="hint">${esc(d.status_note)}</p>` : ''}
+      <div class="dhead"><b>${slotLabel(d)}</b>${ig && d.draft_kind ? `<span class="chip">${KIND[d.draft_kind] || esc(d.draft_kind)}</span>` : ''}${d.role ? `<span class="chip">${esc(d.role)}</span>` : ''}${d.experiment ? `<span class="chip hot">${esc(d.experiment)}</span>` : ''}<span class="pill">${ST[d.status] || d.status}</span></div>
+      ${d.scheduled_label ? `<p class="hint">${ig ? '인스타' : '스레드'}: ${esc(d.scheduled_label)}</p>` : ''}${d.status_note ? `<p class="hint">${esc(d.status_note)}</p>` : ''}
+      ${media.length ? `<div class="thumbs">${media.map((m, i) => `<img data-path="${esc(m.path || '')}" alt="${i + 1}장" loading="lazy">`).join('')}</div><p class="hint">${media.length}장 · 이미지를 누르면 크게 볼 수 있어요</p>` : ''}
+      ${ig ? '<div class="hint" style="margin-bottom:4px">캐션</div>' : ''}
       <textarea class="dbody" data-id="${d.id}" rows="${Math.min(14, b.split('\n').length + 1)}" ${lock ? 'readonly' : ''}>${esc(b)}</textarea>
-      <div class="hint">${b.length}자${needsCheck(b) ? ' · <span class="down">[확인] 부분을 채워야 승인할 수 있어요</span>' : ''}${late ? ' · <span class="down">게시 시각이 1시간 안쪽이라 자동 예약이 어려워요. 복사해서 직접 올려 주세요</span>' : ''}</div>
+      <div class="hint">${b.length}자${ig && b.length > 2200 ? ' · <span class="down">인스타 캐션은 2,200자까지예요</span>' : ''}${needsCheck(b) ? ' · <span class="down">[확인] 부분을 채워야 승인할 수 있어요</span>' : ''}${late ? ' · <span class="down">게시 시각이 1시간 안쪽이라 자동 예약이 어려워요. 직접 올려 주세요</span>' : ''}${ig && d.draft_kind === 'reel' ? ' · 릴스는 휴대폰으로 촬영해서 인스타 앱에서 올려요(음악은 앱에서만 추가돼요)' : ''}${ig && d.draft_kind !== 'reel' && !media.length ? ' · <span class="down">이미지가 없어서 예약할 수 없어요</span>' : ''}</div>
+      ${d.extra ? `<details class="extra" ${d.draft_kind === 'reel' ? 'open' : ''}><summary>${d.draft_kind === 'reel' ? '릴스 대본 · 촬영 컷' : '추가 정보'}</summary><div class="extratxt">${esc(d.extra)}</div><button class="btn sm" data-dact="copyExtra" data-id="${d.id}">대본 복사</button></details>` : ''}
       ${d.self_reply ? `<div class="reply"><div class="l">올린 직후 본인 답글</div><div class="txt">${esc(d.self_reply)}</div><button class="btn sm" data-dact="copyReply" data-id="${d.id}">답글 복사</button></div>` : ''}
       ${d.rationale ? `<p class="hint">근거: ${esc(d.rationale)}</p>` : ''}
       ${d.sources ? `<details class="hint"><summary>사실 출처</summary><div style="white-space:pre-wrap">${esc(d.sources)}</div></details>` : ''}
       <div class="toolbar" style="margin:10px 0 0">
         <button class="btn sm" data-dact="copy" data-id="${d.id}">본문 복사</button>
         ${lock ? '' : `<button class="btn sm ${dirty ? 'dark' : ''}" data-dact="save" data-id="${d.id}" ${dirty ? '' : 'disabled'}>수정 저장</button>`}
-        ${d.status === 'draft' || d.status === 'failed' ? `<button class="btn sm primary" data-dact="approve" data-id="${d.id}" ${needsCheck(b) || tooLate(d) ? 'disabled' : ''}>예약 승인</button>` : ''}
+        ${(d.status === 'draft' || d.status === 'failed') && !(ig && d.draft_kind === 'reel') ? `<button class="btn sm primary" data-dact="approve" data-id="${d.id}" ${canApprove(d) ? '' : 'disabled'}>예약 승인</button>` : ''}
+        ${ig && d.draft_kind === 'reel' && d.status === 'draft' ? `<button class="btn sm" data-dact="done" data-id="${d.id}">올렸어요</button>` : ''}
         ${d.status === 'approved' ? `<button class="btn sm" data-dact="unapprove" data-id="${d.id}">승인 취소</button>` : ''}
         ${d.status === 'draft' || d.status === 'failed' ? `<button class="btn sm" data-dact="skip" data-id="${d.id}">건너뛰기</button>` : ''}
         ${d.status === 'skipped' ? `<button class="btn sm" data-dact="restore" data-id="${d.id}">되살리기</button>` : ''}
-        ${d.status === 'scheduled' ? `<span class="hint">수정·삭제는 스레드 앱 임시 저장본에서</span>` : ''}
+        ${d.status === 'scheduled' ? `<span class="hint">${ig ? '수정·삭제는 인스타 앱 프로필 > 예약된 콘텐츠에서' : '수정·삭제는 스레드 앱 임시 저장본에서'}</span>` : ''}
       </div></div>`;
   }).join('');
   return `<div class="toolbar">
       <select id="draftDay">${days.map(x => `<option value="${x}" ${x === day ? 'selected' : ''}>${dayLabel(x)} 리포트 초안</option>`).join('')}</select>
       <button class="btn primary" data-dact="approveAll" ${ready.length ? '' : 'disabled'}>확인 필요 없는 초안 모두 승인 (${ready.length})</button>
       <button class="btn" id="reload">새로고침</button></div>
-    <div class="card" style="background:#fffaf5"><p class="hint" style="margin:0">승인한 초안은 Aside가 1시간마다(07~22시) 확인해서 스레드 예약 기능으로 걸어요. 예약되면 '예약됨'으로 바뀌고, 그때부터는 컴퓨터가 꺼져 있어도 올라가요. 게시 1시간 전까지는 승인해 주세요. 본인 답글은 예약이 안 돼서 올라간 뒤 직접 달아야 해요.</p></div>
+    <div class="card" style="background:#fffaf5"><p class="hint" style="margin:0">${IG()
+      ? '캐러셀·사진 초안을 승인하면 Aside가 1시간마다(07~22시) 확인해서 인스타 콘텐츠 예약 기능으로 걸어요. 예약되면 컴퓨터가 꺼져 있어도 올라가요. 릴스는 대본을 보고 휴대폰으로 찍어 올리고, 올린 뒤 &#39;올렸어요&#39;를 눌러 주세요. 게시 1시간 전까지는 승인해 주세요.'
+      : '승인한 초안은 Aside가 1시간마다(07~22시) 확인해서 스레드 예약 기능으로 걸어요. 예약되면 &#39;예약됨&#39;으로 바뀌고, 그때부터는 컴퓨터가 꺼져 있어도 올라가요. 게시 1시간 전까지는 승인해 주세요. 본인 답글은 예약이 안 돼서 올라간 뒤 직접 달아야 해요.'}</p></div>
     ${cards}`;
+}
+function canApprove(d) {
+  const b = bodyOf(d); if (needsCheck(b) || tooLate(d)) return false;
+  if (d.platform === 'instagram') { if (d.draft_kind === 'reel') return false; if (!(Array.isArray(d.media) && d.media.length)) return false; if (b.length > 2200) return false; }
+  return true;
+}
+async function loadThumbs() {
+  const imgs = [...document.querySelectorAll('.thumbs img[data-path]')].filter(i => i.dataset.path);
+  const need = [...new Set(imgs.map(i => i.dataset.path).filter(p => !S.signed[p]))];
+  if (need.length) {
+    const { data } = await sb.storage.from('sns-media').createSignedUrls(need, 3600);
+    for (const x of data || []) if (x.signedUrl) S.signed[x.path] = x.signedUrl;
+  }
+  for (const i of imgs) if (S.signed[i.dataset.path]) i.src = S.signed[i.dataset.path];
 }
 async function updDraft(id, patch) {
   const { data, error } = await sb.from('sns_drafts').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select().single();
@@ -346,6 +382,7 @@ function vAnalysis() {
   const days = Array.from({ length: 7 }, (_, d) => { const a = ps.filter(p => postK(p).getUTCDay() === d); return { x: DOW[d], n: a.length, y: a.length ? sum(a, 'views') / a.length : 0, c: conv(sum(a, 'follows'), sum(a, 'views')) }; });
   // 형식
   const feats = [
+    ...(IG() ? [['릴스', p => p.media_kind === 'reel'], ['캐러셀', p => p.media_kind === 'carousel'], ['사진 1장', p => p.media_kind === 'image']] : []),
     ['질문으로 끝남', p => /[?？]\s*[^\n]{0,6}$/.test((p.text || '').trim())],
     ['번호 목록(1. 2.)', p => /(^|\n)\s*[1-9][.)]\s/.test(p.text || '')],
     ['팔로우/스친 요청', p => /팔로우|스친|친해지/.test(p.text || '')],
@@ -361,7 +398,7 @@ function vAnalysis() {
       <div class="kpi"><div class="l">글당 평균 조회</div><div class="v">${fmt(avg(ps, 'views'))}</div><div class="d muted">중앙값 ${fmt(median(ps, 'views'))}</div></div>
       <div class="kpi"><div class="l">글당 평균 팔로우</div><div class="v">${fmt1(avg(ps, 'follows'))}</div><div class="d muted">합 ${fmt(tot.f)}</div></div>
       <div class="kpi"><div class="l">1만 조회당 팔로우</div><div class="v">${fmt1(c0)}</div><div class="d muted">목표 30</div></div>
-      <div class="kpi"><div class="l">글당 좋아요 / 답글</div><div class="v">${fmt(avg(ps, 'likes'))} / ${fmt(avg(ps, 'replies'))}</div><div class="d muted">리포스트 ${fmt1(avg(ps, 'reposts'))}</div></div>
+      <div class="kpi"><div class="l">글당 좋아요 / ${IG() ? '댓글' : '답글'}</div><div class="v">${fmt(avg(ps, 'likes'))} / ${fmt(avg(ps, 'replies'))}</div><div class="d muted">${IG() ? `저장 ${fmt1(avg(ps, 'saves'))} · 공유 ${fmt1(avg(ps, 'shares'))} · 비팔로워 ${fmt1(avg(ps, 'nonfollower_view_pct'))}%` : `리포스트 ${fmt1(avg(ps, 'reposts'))}`}</div></div>
       <div class="kpi"><div class="l">글당 프로필 방문</div><div class="v">${fmt(avg(ps, 'profile_visits'))}</div><div class="d muted">방문→팔로우 ${fmt1(sum(ps, 'profile_visits') ? tot.f / sum(ps, 'profile_visits') * 100 : null)}%</div></div>
     </div>
     <div class="grid2">
@@ -383,6 +420,7 @@ function vAnalysis() {
 
 /* ---------- track ---------- */
 function vTrack() {
+  if (IG()) return `<div class="card empty">인스타 계정 추적은 아직 지원하지 않아요. 스레드로 전환하면 추적 계정을 볼 수 있어요.</div>`;
   const by = new Map(); for (const r of S.tdaily) { if (!by.has(r.handle)) by.set(r.handle, []); by.get(r.handle).push(r); }
   const me = S.settings?.threads_handle;
   const at = (arr, d) => { let b = null; for (const r of arr) if (r.day <= d) b = r; return b; };
@@ -433,20 +471,25 @@ $app.addEventListener('click', async e => {
   if (t.dataset.tab) return go(t.dataset.tab);
   if (t.dataset.day) { const d = S.reportDay || shiftDay(todayK(), -1); S.reportDay = shiftDay(d, Number(t.dataset.day)); if (S.reportDay > todayK()) S.reportDay = todayK(); return render(); }
   if (t.dataset.fp) { S.folPeriod = t.dataset.fp; return render(); }
+  if (t.dataset.pf) { S.platform = t.dataset.pf; localStorage.setItem('sns_pf', S.platform); S.draftDay = null; S.reportDay = null; applyPlatform(); if (IG() && S.tab === 'track') S.tab = 'report'; return render(); }
   if (t.dataset.dact) {
     const id = t.dataset.id, d = S.drafts.find(x => x.id === id);
     switch (t.dataset.dact) {
       case 'copy': await navigator.clipboard.writeText(bodyOf(d)); return toast('본문을 복사했어요');
       case 'copyReply': await navigator.clipboard.writeText(d.self_reply || ''); return toast('답글을 복사했어요');
+      case 'copyExtra': await navigator.clipboard.writeText(d.extra || ''); return toast('대본을 복사했어요');
+      case 'done': if (await updDraft(id, { status: 'scheduled', status_note: '직접 올림', scheduled_label: '휴대폰으로 올림' })) toast('올린 것으로 표시했어요'); return render();
       case 'save': if (await updDraft(id, { body: bodyOf(d) })) toast('저장했어요'); return render();
-      case 'approve': { const b = bodyOf(d); if (needsCheck(b)) return toast('[확인] 부분을 먼저 채워 주세요');
+      case 'approve': { const b = bodyOf(d); if (needsCheck(b)) return toast('[확인] 부분을 먼저 채워 주세요'); if (!canApprove({ ...d, body: b })) return toast('이 초안은 예약할 수 없어요');
         if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast('승인했어요. 1시간 안에 스레드에 예약돼요'); return render(); }
       case 'unapprove': if (await updDraft(id, { status: 'draft', approved_at: null })) toast('승인을 취소했어요'); return render();
       case 'skip': if (await updDraft(id, { status: 'skipped' })) toast('건너뛰었어요'); return render();
       case 'restore': if (await updDraft(id, { status: 'draft', status_note: null })) toast('되살렸어요'); return render();
       case 'approveAll': {
-        const day = S.draftDay || [...new Set(S.drafts.map(x => x.report_day))].sort().reverse()[0];
-        const list = S.drafts.filter(x => x.report_day === day && x.status === 'draft' && !needsCheck(bodyOf(x)) && !tooLate(x));
+        const mine = S.drafts.filter(x => (x.platform || 'threads') === S.platform);
+        const days = [...new Set(mine.map(x => x.report_day))].sort().reverse();
+        const day = S.draftDay && days.includes(S.draftDay) ? S.draftDay : days[0];
+        const list = mine.filter(x => x.report_day === day && x.status === 'draft' && canApprove(x));
         for (const x of list) await updDraft(x.id, { body: bodyOf(x), status: 'approved', approved_at: new Date().toISOString(), status_note: null });
         toast(`${list.length}개 승인했어요`); return render();
       }
@@ -481,12 +524,13 @@ $app.addEventListener('click', async e => {
     }
   }
 });
+$app.addEventListener('click', e => { const im = e.target.closest('.thumbs img'); if (im?.src) window.open(im.src, '_blank'); });
 $app.addEventListener('input', e => {
   if (e.target.classList.contains('dbody')) {
     const id = e.target.dataset.id; S.edits[id] = e.target.value;
     const d = S.drafts.find(x => x.id === id); const card = e.target.closest('.draft');
     const sv = card.querySelector('[data-dact="save"]'); if (sv) { const dirty = e.target.value !== d.body; sv.disabled = !dirty; sv.classList.toggle('dark', dirty); }
-    const ap = card.querySelector('[data-dact="approve"]'); if (ap) ap.disabled = needsCheck(e.target.value) || tooLate(d);
+    const ap = card.querySelector('[data-dact="approve"]'); if (ap) ap.disabled = !canApprove({ ...d, body: e.target.value });
     return;
   }
   if (e.target.id === 'postQ') { S.postQ = e.target.value; clearTimeout(S._q); S._q = setTimeout(() => { const pos = e.target.selectionStart; render(); const el = document.getElementById('postQ'); el.focus(); el.setSelectionRange(pos, pos); }, 250); }
