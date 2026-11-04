@@ -312,7 +312,7 @@ const needsCheck = s => /\[확인/.test(s || '');
 const slotK = d => new Date(Date.parse(d.slot_at) + KST).toISOString();
 const slotLabel = d => { const k = slotK(d); const day = k.slice(0, 10); return `${day === todayK() ? '오늘' : day === shiftDay(todayK(), 1) ? '내일' : dayLabel(day)} ${k.slice(11, 16)}`; };
 const bodyOf = d => S.edits[d.id] ?? d.body;
-const tooLate = d => Date.parse(d.slot_at) < Date.now() + 70 * 60e3;
+const tooLate = d => Date.parse(d.slot_at) < Date.now() + (d.platform === 'instagram' ? 45 : 30) * 60e3; // 15분마다 처리 + 인스타 최소 20분
 function aiReportCard() {
   const r = S.reports[0]; if (!r) return '';
   const ds = S.drafts.filter(d => d.report_day === r.day && (d.platform || 'threads') === S.platform);
@@ -342,7 +342,7 @@ function vDrafts() {
       ${media.length ? `<div class="thumbs">${media.map((m, i) => `<img data-path="${esc(m.path || '')}" alt="${i + 1}장" loading="lazy">`).join('')}</div><p class="hint">${media.length}장 · 이미지를 누르면 크게 볼 수 있어요</p>` : ''}
       ${ig ? '<div class="hint" style="margin-bottom:4px">캐션</div>' : ''}
       <textarea class="dbody" data-id="${d.id}" rows="${Math.min(14, b.split('\n').length + 1)}" ${lock ? 'readonly' : ''}>${esc(b)}</textarea>
-      <div class="hint">${b.length}자${ig && b.length > 2200 ? ' · <span class="down">인스타 캐션은 2,200자까지예요</span>' : ''}${needsCheck(b) ? ' · <span class="down">[확인] 부분을 채워야 승인할 수 있어요</span>' : ''}${late ? ' · <span class="down">게시 시각이 1시간 안쪽이라 자동 예약이 어려워요. 직접 올려 주세요</span>' : ''}${ig && d.draft_kind === 'reel' ? ' · 릴스는 휴대폰으로 촬영해서 인스타 앱에서 올려요(음악은 앱에서만 추가돼요)' : ''}${ig && d.draft_kind !== 'reel' && !media.length ? ' · <span class="down">이미지가 없어서 예약할 수 없어요</span>' : ''}</div>
+      <div class="hint">${b.length}자${ig && b.length > 2200 ? ' · <span class="down">인스타 캐션은 2,200자까지예요</span>' : ''}${needsCheck(b) ? ' · <span class="down">[확인] 부분을 채워야 승인할 수 있어요</span>' : ''}${late ? ' · <span class="down">게시 시각이 너무 가까워 자동 예약이 어려워요. 직접 올려 주세요</span>' : ''}${ig && d.draft_kind === 'reel' ? ' · 릴스는 휴대폰으로 촬영해서 인스타 앱에서 올려요(음악은 앱에서만 추가돼요)' : ''}${ig && d.draft_kind !== 'reel' && !media.length ? ' · <span class="down">이미지가 없어서 예약할 수 없어요</span>' : ''}</div>
       ${d.extra ? `<details class="extra" ${d.draft_kind === 'reel' ? 'open' : ''}><summary>${d.draft_kind === 'reel' ? '릴스 대본 · 촬영 컷' : '추가 정보'}</summary><div class="extratxt">${esc(d.extra)}</div><button class="btn sm" data-dact="copyExtra" data-id="${d.id}">대본 복사</button></details>` : ''}
       ${d.self_reply ? `<div class="reply"><div class="l">올린 직후 본인 답글</div><div class="txt">${esc(d.self_reply)}</div><button class="btn sm" data-dact="copyReply" data-id="${d.id}">답글 복사</button></div>` : ''}
       ${d.rationale ? `<p class="hint">근거: ${esc(d.rationale)}</p>` : ''}
@@ -363,8 +363,8 @@ function vDrafts() {
       <button class="btn primary" data-dact="approveAll" ${ready.length ? '' : 'disabled'}>확인 필요 없는 초안 모두 승인 (${ready.length})</button>
       <button class="btn" id="reload">새로고침</button></div>
     <div class="card" style="background:#fffaf5"><p class="hint" style="margin:0">${IG()
-      ? '캐러셀·사진 초안을 승인하면 Aside가 1시간마다(07~22시) 확인해서 인스타 콘텐츠 예약 기능으로 걸어요. 예약되면 컴퓨터가 꺼져 있어도 올라가요. 릴스는 대본을 보고 휴대폰으로 찍어 올리고, 올린 뒤 &#39;올렸어요&#39;를 눌러 주세요. 게시 1시간 전까지는 승인해 주세요.'
-      : '승인한 초안은 Aside가 1시간마다(07~22시) 확인해서 스레드 예약 기능으로 걸어요. 예약되면 &#39;예약됨&#39;으로 바뀌고, 그때부터는 컴퓨터가 꺼져 있어도 올라가요. 게시 1시간 전까지는 승인해 주세요. 본인 답글은 예약이 안 돼서 올라간 뒤 직접 달아야 해요.'}</p></div>
+      ? '캐러셀·사진 초안을 승인하면 Aside가 15분마다(07~23시) 확인해서 인스타 콘텐츠 예약 기능으로 걸어요. 예약되면 컴퓨터가 꺼져 있어도 올라가요. 릴스는 대본을 보고 휴대폰으로 찍어 올리고, 올린 뒤 &#39;올렸어요&#39;를 눌러 주세요. 게시 45분 전까지는 승인해 주세요.'
+      : '승인한 초안은 Aside가 15분마다(07~23시) 확인해서 스레드 예약 기능으로 걸어요. 예약되면 &#39;예약됨&#39;으로 바뀌고, 그때부터는 컴퓨터가 꺼져 있어도 올라가요. 게시 30분 전까지는 승인해 주세요. 본인 답글은 예약이 안 돼서 올라간 뒤 직접 달아야 해요.'}</p></div>
     ${cards}`;
 }
 function canApprove(d) {
@@ -553,7 +553,7 @@ $app.addEventListener('click', async e => {
       case 'done': if (await updDraft(id, { status: 'scheduled', status_note: '직접 올림', scheduled_label: '휴대폰으로 올림' })) toast('올린 것으로 표시했어요'); return render();
       case 'save': if (await updDraft(id, { body: bodyOf(d) })) toast('저장했어요'); return render();
       case 'approve': { const b = bodyOf(d); if (needsCheck(b)) return toast('[확인] 부분을 먼저 채워 주세요'); if (!canApprove({ ...d, body: b })) return toast('이 초안은 예약할 수 없어요');
-        if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast(`승인했어요. 1시간 안에 ${d.platform === 'instagram' ? '인스타' : '스레드'}에 예약돼요`); return render(); }
+        if (await updDraft(id, { body: b, status: 'approved', approved_at: new Date().toISOString(), status_note: null })) toast(`승인했어요. 15분 안에 ${d.platform === 'instagram' ? '인스타' : '스레드'}에 예약돼요`); return render(); }
       case 'unapprove': if (await updDraft(id, { status: 'draft', approved_at: null })) toast('승인을 취소했어요'); return render();
       case 'skip': if (await updDraft(id, { status: 'skipped' })) toast('건너뛰었어요'); return render();
       case 'restore': if (await updDraft(id, { status: 'draft', status_note: null })) toast('되살렸어요'); return render();
