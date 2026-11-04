@@ -113,7 +113,7 @@ code { background: #f2f2f0; padding: 1px 6px; border-radius: 6px; font-size: 13p
 .reply { margin-top: 10px; background: #f6f6f4; border-radius: 10px; padding: 10px 12px; }
 .reply .l { font-size: 12px; color: var(--sub); font-weight: 700; }
 .reply .txt { white-space: pre-wrap; margin: 4px 0 8px; }
-.fullrep { margin-top: 12px; background: #1d1d1f; border-radius: 10px; padding: 12px; white-space: pre-wrap; font-size: 13px; color: #e8e8ea; max-height: 60vh; overflow: auto; }
+.fullrep { margin-top: 12px; background: #1d1d1f; border-radius: 10px; padding: 12px; font-size: 13px; color: #e8e8ea; max-height: 60vh; overflow: auto; }
 .action .chip { background: #2a2a2d; color: #fff; }
 .pfseg { margin-left: auto; margin-right: 10px; background: #2a2a2d; }
 .pfseg button { color: #b9b9be; }
@@ -124,6 +124,23 @@ code { background: #f2f2f0; padding: 1px 6px; border-radius: 6px; font-size: 13p
 .extra summary { cursor: pointer; font-weight: 700; font-size: 13px; }
 .extratxt { white-space: pre-wrap; font-size: 13px; margin: 8px 0; max-height: 50vh; overflow: auto; }
 .pfseg button { white-space: nowrap; }
+/* requests */
+.reqbar .reqtop { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.reqform textarea, .reqform select { font: inherit; }
+.reqform textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; resize: vertical; }
+.reqlist { margin-top: 10px; border-top: 1px solid var(--line); }
+.reqrow { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.reqrow:last-child { border-bottom: 0; }
+.reqrow .rqh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; font-weight: 600; }
+.reqrow .pill { margin-left: auto; }
+.reqrow.st-pending .pill, .reqrow.st-running .pill { background: #e8f0fe; color: var(--blue); }
+.reqrow.st-done .pill { background: #e6f4ea; color: var(--good); }
+.reqrow.st-failed .pill { background: #fdecea; color: var(--bad); }
+.reqres { margin-top: 8px; background: #fafaf8; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.md p { margin: 6px 0; } .md .mdh { margin: 14px 0 6px; font-size: 15px; } .md .mdl { margin: 4px 0; padding-left: 20px; } .md .mdl li { margin: 2px 0; }
+.md .mdq { border-left: 3px solid var(--accent); padding-left: 8px; color: var(--sub); }
+.md table.mdt td, .md table.mdt th { white-space: normal; text-align: left; vertical-align: top; }
+.fullrep .md, .fullrep .md p, .fullrep .md li { color: #e8e8ea; } .fullrep table.mdt th, .fullrep table.mdt td { border-color: #3a3a3d; color: #e8e8ea; }
 @media (max-width: 600px) { .pfseg { margin-right: 6px; } .pfseg button { padding: 5px 9px; } .brand h1 span { display: none; } .brand h1 { white-space: nowrap; } }
 
 @media (max-width: 600px) {

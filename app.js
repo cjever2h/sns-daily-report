@@ -8,7 +8,7 @@ const $app = document.getElementById('app');
 const KST = 9 * 3600e3;
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 
-const S = { platform: localStorage.getItem('sns_pf') === 'instagram' ? 'instagram' : 'threads', allDaily: [], allPosts: [], signed: {}, user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], drafts: [], reports: [], draftDay: null, edits: {}, showFull: false, tab: 'report', reportDay: null,
+const S = { requests: [], reqForm: false, openReq: null, platform: localStorage.getItem('sns_pf') === 'instagram' ? 'instagram' : 'threads', allDaily: [], allPosts: [], signed: {}, user: null, settings: null, daily: [], posts: [], tracked: [], tdaily: [], drafts: [], reports: [], draftDay: null, edits: {}, showFull: false, tab: 'report', reportDay: null,
   postQ: '', postSort: 'recent', postRange: '30', anaRange: '30', folPeriod: 'day', loaded: false };
 
 /* ---------- utils ---------- */
@@ -94,6 +94,7 @@ async function loadAll() {
   S.allDaily = d.data || []; S.allPosts = (p.data || []).filter(x => x.posted_at); S.tracked = t.data || []; S.tdaily = td.data || [];
   applyPlatform();
   S.drafts = dr.data || []; S.reports = rp.data || [];
+  await loadRequests();
   S.loaded = true;
 }
 const fol = r => r.followers ?? r.insights_followers;
@@ -120,6 +121,7 @@ function render() {
   if (!S.loaded) { $app.innerHTML = `<div class="boot">데이터 불러오는 중…</div>`; return; }
   const views = { report: vReport, drafts: vDrafts, followers: vFollowers, posts: vPosts, analysis: vAnalysis, track: vTrack, settings: vSettings };
   const needData = !S.daily.length && !S.posts.length && !['settings', 'track', 'drafts'].includes(S.tab);
+  pollRequests();
   $app.innerHTML = shell(needData ? (IG() ? `<div class="card empty">인스타 데이터는 매일 아침 Aside 리포트가 올려요. 내일 아침부터 표시돼요.</div>` : vOnboard()) : views[S.tab]());
   if (S.tab === 'drafts') loadThumbs();
 }
@@ -180,7 +182,7 @@ function vReport() {
     <td class="${c != null && conv30 != null && c >= conv30 ? 'up' : ''}">${fmt1(c)}</td><td>${fmt(p.likes)}</td><td>${fmt(p.replies)}</td>${IG() ? `<td>${fmt(p.saves)}</td><td>${fmt(p.shares)}</td><td>${fmt1(p.nonfollower_view_pct)}%</td>` : ''}
     <td><a class="btn sm" href="${threadUrl(p)}" target="_blank" rel="noopener">보기</a></td></tr>`; }).join('');
 
-  return `${aiReportCard()}<div class="toolbar">
+  return `${requestBar()}${aiReportCard()}<div class="toolbar">
       <button class="btn" data-day="-1">◀ 전날</button>
       <input type="date" id="repDay" value="${day}" max="${todayK()}">
       <button class="btn" data-day="1" ${day >= todayK() ? 'disabled' : ''}>다음날 ▶</button>
@@ -237,6 +239,73 @@ function postCard(p, conv30) {
       ${ig ? `<span class="chip">저장 <b>${fmt(p.saves)}</b></span><span class="chip">공유 <b>${fmt(p.shares)}</b></span><span class="chip ${p.nonfollower_view_pct >= 60 ? 'hot' : ''}">비팔로워 <b>${fmt1(p.nonfollower_view_pct)}%</b></span>` : `<span class="chip">리포스트 <b>${fmt(p.reposts)}</b></span>`}</div></div>`;
 }
 
+/* ---------- 지금 업데이트 / 리포트 요청 (Aside가 15분마다 처리) ---------- */
+async function loadRequests() {
+  const { data } = await sb.from('sns_requests').select('*').order('created_at', { ascending: false }).limit(20);
+  const before = new Map(S.requests.map(r => [r.id, r.status]));
+  S.requests = data || [];
+  return S.requests.filter(r => before.get(r.id) && before.get(r.id) !== r.status && ['done', 'failed'].includes(r.status));
+}
+const RQ = { pending: '대기 중', running: '처리 중', done: '완료', failed: '실패', canceled: '취소됨' };
+const SCOPE = { all: '전체(스레드·인스타·블로그)', threads: '스레드', instagram: '인스타', blog: '블로그' };
+const RANGE = { today: '오늘', yesterday: '어제', '7d': '최근 7일' };
+const kts = s => s ? new Date(Date.parse(s) + KST).toISOString().slice(5, 16).replace('T', ' ') : '-';
+const active = kind => S.requests.find(r => r.kind === kind && ['pending', 'running'].includes(r.status));
+function md(src) { // 간단한 마크다운 표시(제목, 굵게, 목록, 표)
+  const inl = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  const out = []; const L = String(src || '').split('\n'); let i = 0;
+  while (i < L.length) {
+    const l = L[i];
+    if (/^\s*\|.*\|\s*$/.test(l)) { const rows = []; while (i < L.length && /^\s*\|.*\|\s*$/.test(L[i])) rows.push(L[i++]);
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const body = rows.filter(r => !/^\s*\|[\s:|-]+\|\s*$/.test(r));
+      out.push(`<div class="scroll-x"><table class="mdt">${body.map((r, k) => `<tr>${cells(r).map(c => k ? `<td>${inl(c)}</td>` : `<th>${inl(c)}</th>`).join('')}</tr>`).join('')}</table></div>`); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h${Math.min(4, h[1].length + 1)} class="mdh">${inl(h[2])}</h${Math.min(4, h[1].length + 1)}>`); i++; continue; }
+    if (/^\s*[-*]\s+/.test(l) || /^\s*\d+\.\s+/.test(l)) { const items = []; while (i < L.length && (/^\s*[-*]\s+/.test(L[i]) || /^\s*\d+\.\s+/.test(L[i]))) items.push(L[i++].replace(/^\s*([-*]|\d+\.)\s+/, ''));
+      out.push(`<ul class="mdl">${items.map(x => `<li>${inl(x)}</li>`).join('')}</ul>`); continue; }
+    if (!l.trim()) { i++; continue; }
+    if (/^>\s?/.test(l)) { out.push(`<p class="mdq">${inl(l.replace(/^>\s?/, ''))}</p>`); i++; continue; }
+    out.push(`<p>${inl(l)}</p>`); i++;
+  }
+  return `<div class="md">${out.join('')}</div>`;
+}
+function requestBar() {
+  const lastPf = S.daily[S.daily.length - 1];
+  const ref = active('refresh'), rep = active('report');
+  const recent = S.requests.slice(0, 6);
+  return `<div class="card reqbar">
+    <div class="reqtop"><div><b>지표 기준</b> <span class="hint">${lastPf ? kts(lastPf.collected_at) + ' 수집' : '수집 기록 없음'}</span></div>
+      <div class="toolbar" style="margin:0">
+        <button class="btn primary" id="reqRefresh" ${ref ? 'disabled' : ''}>${ref ? (ref.status === 'running' ? '업데이트 중…' : '업데이트 대기 중') : '지금 업데이트'}</button>
+        <button class="btn dark" id="reqReportOpen">${S.reqForm ? '요청 닫기' : '리포트 요청'}</button></div></div>
+    ${ref || rep ? `<p class="hint" style="margin:8px 0 0">Aside가 15분마다(07~23시) 확인해서 처리해요. 이 컴퓨터와 Aside가 켜져 있어야 해요. 끝나면 이 화면이 자동으로 바뀌어요.</p>` : ''}
+    ${S.reqForm ? `<form id="reqForm" class="reqform">
+      <div class="toolbar" style="margin:10px 0 6px">
+        <select id="rqScope">${Object.entries(SCOPE).map(([k, l]) => `<option value="${k}" ${k === (IG() ? 'instagram' : 'all') ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <select id="rqRange">${Object.entries(RANGE).map(([k, l]) => `<option value="${k}" ${k === 'today' ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <textarea id="rqQ" rows="3" placeholder="궁금한 점(선택) 예: 오늘 어떤 글이 팔로우를 만들었어? 릴스는 왜 팔로우가 0일까?"></textarea>
+      <div class="toolbar" style="margin:8px 0 0"><button class="btn primary" type="submit" ${rep ? 'disabled' : ''}>${rep ? '이미 요청한 리포트가 있어요' : '요청하기'}</button>
+      <span class="hint">최신 지표를 먼저 모은 뒤 분석해요.</span></div></form>` : ''}
+    ${recent.length ? `<div class="reqlist">${recent.map(r => `<div class="reqrow st-${r.status}">
+      <div class="rqh"><span>${r.kind === 'refresh' ? '지표 업데이트' : '리포트'}${r.kind === 'report' ? ` · ${SCOPE[r.params?.scope] || ''} · ${RANGE[r.params?.range] || ''}` : ''}</span>
+        <span class="hint">${kts(r.created_at)} 요청${r.finished_at ? ' · ' + kts(r.finished_at) + ' 완료' : ''}</span><span class="pill">${RQ[r.status] || r.status}</span>
+        ${['pending'].includes(r.status) ? `<button class="btn sm" data-rqcancel="${r.id}">취소</button>` : ''}
+        ${r.result_md ? `<button class="btn sm" data-rqopen="${r.id}">${S.openReq === r.id ? '접기' : '보기'}</button>` : ''}</div>
+      ${r.params?.question ? `<div class="hint">질문: ${esc(r.params.question)}</div>` : ''}${r.note ? `<div class="hint">${esc(r.note)}</div>` : ''}
+      ${S.openReq === r.id && r.result_md ? `<div class="reqres">${md(r.result_md)}<div class="toolbar" style="margin:8px 0 0"><button class="btn sm" data-rqcopy="${r.id}">텍스트 복사</button></div></div>` : ''}</div>`).join('')}</div>` : ''}
+  </div>`;
+}
+function pollRequests() {
+  clearTimeout(S._poll);
+  if (!S.requests.some(r => ['pending', 'running'].includes(r.status))) return;
+  S._poll = setTimeout(async () => {
+    const changed = await loadRequests();
+    if (changed.some(r => r.kind === 'refresh' && r.status === 'done') || changed.some(r => r.kind === 'report' && r.status === 'done')) { await loadAll(); toast(changed.some(r => r.kind === 'report') ? '요청한 리포트가 도착했어요' : '최신 지표로 업데이트했어요'); const rep = changed.find(r => r.kind === 'report' && r.status === 'done'); if (rep) S.openReq = rep.id; }
+    else if (changed.some(r => r.status === 'failed')) toast('요청을 처리하지 못했어요. 안내를 확인해 주세요');
+    if (S.tab === 'report' && !document.activeElement?.closest?.('#reqForm')) render(); pollRequests();
+  }, 20000);
+}
+
 /* ---------- AI 리포트 요약 + 초안 (Aside 루틴이 매일 아침 올림) ---------- */
 const ST = { draft: '초안', approved: '승인됨 · 예약 대기', scheduled: '예약됨', failed: '예약 실패', skipped: '건너뜀' };
 const needsCheck = s => /\[확인/.test(s || '');
@@ -254,7 +323,7 @@ function aiReportCard() {
     ${chips ? `<div class="chips" style="margin-top:10px">${chips}</div>` : ''}
     <div class="toolbar" style="margin:12px 0 0">${ds.length ? `<button class="btn sm primary" data-tab="drafts">초안 ${ds.length}개 보기${waiting ? ` · 승인 대기 ${waiting}` : ''}</button>` : ''}
     ${r.report_md ? `<button class="btn sm" id="toggleFull">${S.showFull ? '리포트 전문 접기' : '리포트 전문 보기'}</button>` : ''}</div>
-    ${S.showFull && r.report_md ? `<div class="fullrep">${esc(r.report_md)}</div>` : ''}</div>`;
+    ${S.showFull && r.report_md ? `<div class="fullrep">${md(r.report_md)}</div>` : ''}</div>`;
 }
 function vDrafts() {
   const mine = S.drafts.filter(d => (d.platform || 'threads') === S.platform);
@@ -471,6 +540,9 @@ $app.addEventListener('click', async e => {
   if (t.dataset.tab) return go(t.dataset.tab);
   if (t.dataset.day) { const d = S.reportDay || shiftDay(todayK(), -1); S.reportDay = shiftDay(d, Number(t.dataset.day)); if (S.reportDay > todayK()) S.reportDay = todayK(); return render(); }
   if (t.dataset.fp) { S.folPeriod = t.dataset.fp; return render(); }
+  if (t.dataset.rqopen) { S.openReq = S.openReq === t.dataset.rqopen ? null : t.dataset.rqopen; return render(); }
+  if (t.dataset.rqcopy) { const r = S.requests.find(x => x.id === t.dataset.rqcopy); await navigator.clipboard.writeText(r?.result_md || ''); return toast('리포트를 복사했어요'); }
+  if (t.dataset.rqcancel) { await sb.from('sns_requests').update({ status: 'canceled', finished_at: new Date().toISOString() }).eq('id', t.dataset.rqcancel).eq('status', 'pending'); await loadRequests(); toast('요청을 취소했어요'); return render(); }
   if (t.dataset.pf) { S.platform = t.dataset.pf; localStorage.setItem('sns_pf', S.platform); S.draftDay = null; S.reportDay = null; applyPlatform(); if (IG() && S.tab === 'track') S.tab = 'report'; return render(); }
   if (t.dataset.dact) {
     const id = t.dataset.id, d = S.drafts.find(x => x.id === id);
@@ -506,6 +578,13 @@ $app.addEventListener('click', async e => {
   }
   switch (t.id) {
     case 'toggleFull': S.showFull = !S.showFull; return render();
+    case 'reqReportOpen': S.reqForm = !S.reqForm; return render();
+    case 'reqRefresh': {
+      if (active('refresh')) return toast('이미 요청했어요');
+      const { error } = await sb.from('sns_requests').insert({ user_id: S.user.id, kind: 'refresh', params: { scope: 'all' } });
+      if (error) return toast('실패: ' + error.message);
+      await loadRequests(); toast('업데이트를 요청했어요. 보통 15분 안에 반영돼요'); return render();
+    }
     case 'copyRep': await navigator.clipboard.writeText(reportText(S.reportDay || shiftDay(todayK(), -1))); return toast('리포트를 복사했어요');
     case 'copyKey': await navigator.clipboard.writeText(S.settings.ingest_key); return toast('수집 키를 복사했어요');
     case 'regenKey': {
@@ -542,6 +621,14 @@ $app.addEventListener('change', e => {
   if (e.target.id === 'draftDay') { S.draftDay = e.target.value; render(); }
 });
 $app.addEventListener('submit', async e => {
+  if (e.target.id === 'reqForm') {
+    e.preventDefault();
+    if (active('report')) return toast('이미 요청한 리포트가 있어요');
+    const params = { scope: document.getElementById('rqScope').value, range: document.getElementById('rqRange').value, question: document.getElementById('rqQ').value.trim() || null };
+    const { error } = await sb.from('sns_requests').insert({ user_id: S.user.id, kind: 'report', params });
+    if (error) return toast('실패: ' + error.message);
+    S.reqForm = false; await loadRequests(); toast('리포트를 요청했어요. 보통 15~20분 안에 도착해요'); return render();
+  }
   if (e.target.id !== 'addTrack') return;
   e.preventDefault();
   let h = document.getElementById('th').value.trim();
